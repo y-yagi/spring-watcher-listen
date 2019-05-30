@@ -23,7 +23,7 @@ module Spring
 
       def start
         unless @listener
-          @listener = ::Listen.to(*base_directories, latency: latency, &method(:changed))
+          @listener = ::Listen.to(*base_directories, latency: latency, recursive: false, &method(:changed))
           @listener.start
         end
       end
