@@ -19,12 +19,21 @@ module Spring
     class Listen < Abstract
       Spring.watch_method = self
 
-      attr_reader :listener
+      attr_reader :listener, :poller
 
       def start
-        unless @listener
+        return if @listener || @poller
+
+        root_files, @files = files.partition { |f| File.expand_path("#{f}/..") == root }
+        root_directories, @directories = directories.partition { |d| d == root }
+
+        unless base_directories.empty?
           @listener = ::Listen.to(*base_directories, latency: latency, &method(:changed))
           @listener.start
+        end
+
+        if !root_files.empty? || !root_directories.empty?
+          start_polling_watcher(root_files, root_directories)
         end
       end
 
@@ -32,6 +41,11 @@ module Spring
         if @listener
           @listener.stop
           @listener = nil
+        end
+
+        if @poller
+          @poller.stop
+          @poller = nil
         end
       end
 
@@ -47,6 +61,7 @@ module Spring
       end
 
       def changed(modified, added, removed)
+        debug { "changed: #{modified}, #{added}, #{removed}" }
         synchronize do
           if (modified + added + removed).any? { |f| watching? f }
             mark_stale
@@ -55,10 +70,15 @@ module Spring
       end
 
       def base_directories
-        ([root] +
-          files.reject       { |f| f.start_with? "#{root}/" }.map { |f| File.expand_path("#{f}/..") } +
-          directories.reject { |d| d.start_with? "#{root}/" }
-        ).uniq.map { |path| Pathname.new(path) }
+        (files.map { |f| File.expand_path("#{f}/..") } + directories.to_a).uniq.map { |path| Pathname.new(path) }
+      end
+
+      def start_polling_watcher(files, directories)
+        @poller = Spring::Watcher::Polling.new(root, latency)
+        @poller.add(files, directories)
+        @poller.instance_variable_set(:@listeners, @listeners)
+        @poller.instance_variable_set(:@on_debug, @on_debug)
+        @poller.start
       end
     end
   end
